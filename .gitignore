@@ -1,0 +1,9 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+terraform-outputs.json
+inventory.generated.yml
+*.retry
+.vault-pass
+__pycache__/

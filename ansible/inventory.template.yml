@@ -1,0 +1,19 @@
+all:
+  children:
+    mongo:
+      vars:
+        ansible_connection: community.aws.aws_ssm
+        ansible_aws_ssm_region: ap-south-1
+        ansible_aws_ssm_bucket_name: REPLACE_WITH_BUCKET
+        ansible_user: ubuntu
+        replica_set_name: rs0
+      hosts:
+        mongo1:
+          ansible_host: REPLACE_INSTANCE_ID_1
+          mongo_private_ip: REPLACE_PRIVATE_IP_1
+        mongo2:
+          ansible_host: REPLACE_INSTANCE_ID_2
+          mongo_private_ip: REPLACE_PRIVATE_IP_2
+        mongo3:
+          ansible_host: REPLACE_INSTANCE_ID_3
+          mongo_private_ip: REPLACE_PRIVATE_IP_3

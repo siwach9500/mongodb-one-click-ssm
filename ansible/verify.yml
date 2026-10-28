@@ -1,0 +1,55 @@
+---
+- name: Verify replica set and insert demo documents
+  hosts: mongo1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for a writable primary
+      ansible.builtin.command:
+        argv:
+          - mongosh
+          - --quiet
+          - --eval
+          - "db.hello().isWritablePrimary"
+      register: primary_result
+      retries: 30
+      delay: 5
+      until: "'true' in primary_result.stdout"
+      changed_when: false
+
+    - name: Insert or update two demo documents
+      ansible.builtin.command:
+        argv:
+          - mongosh
+          - --quiet
+          - --eval
+          - >-
+            db.getSiblingDB('demo').documents.updateOne(
+              {_id: 'demo-1'},
+              {$set: {title: 'First demo document', purpose: 'Replica set learning'}},
+              {upsert: true}
+            );
+            db.getSiblingDB('demo').documents.updateOne(
+              {_id: 'demo-2'},
+              {$set: {title: 'Second demo document', purpose: 'Replication verification'}},
+              {upsert: true}
+            );
+            printjson(db.getSiblingDB('demo').documents.find().toArray())
+      register: demo_docs
+      changed_when: "'upsertedCount' in demo_docs.stdout"
+
+    - name: Show replica set status
+      ansible.builtin.command:
+        argv:
+          - mongosh
+          - --quiet
+          - --eval
+          - "printjson(rs.status().members.map(m => ({name:m.name,stateStr:m.stateStr,health:m.health})))"
+      register: replica_status
+      changed_when: false
+
+    - name: Print demo documents and member status
+      ansible.builtin.debug:
+        msg:
+          - "{{ demo_docs.stdout }}"
+          - "{{ replica_status.stdout }}"

@@ -1,0 +1,108 @@
+---
+- name: Install prerequisite packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - gnupg
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create keyring directory
+  ansible.builtin.file:
+    path: /usr/share/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Download MongoDB signing key
+  ansible.builtin.get_url:
+    url: "{{ mongodb_repo_key_url }}"
+    dest: /tmp/mongodb-server-7.0.asc
+    mode: "0644"
+
+- name: Convert MongoDB key to keyring
+  ansible.builtin.command:
+    cmd: gpg --dearmor --yes -o /usr/share/keyrings/mongodb-server-7.0.gpg /tmp/mongodb-server-7.0.asc
+  args:
+    creates: /usr/share/keyrings/mongodb-server-7.0.gpg
+
+- name: Configure MongoDB apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] {{ mongodb_repo_url }} {{ ansible_distribution_release }}/mongodb-org/{{ mongodb_major_version }} multiverse"
+    filename: mongodb-org-7.0
+    state: present
+
+- name: Install MongoDB packages
+  ansible.builtin.apt:
+    name: mongodb-org
+    state: present
+    update_cache: true
+
+- name: Ensure MongoDB data directory exists
+  ansible.builtin.file:
+    path: "{{ mongodb_data_path }}"
+    state: directory
+    owner: mongodb
+    group: mongodb
+    mode: "0750"
+
+- name: Configure mongod
+  ansible.builtin.template:
+    src: mongod.conf.j2
+    dest: /etc/mongod.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart mongod
+
+- name: Enable and start mongod
+  ansible.builtin.systemd:
+    name: mongod
+    enabled: true
+    state: started
+
+- name: Apply pending MongoDB restart before replica-set initialization
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for MongoDB to listen
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ mongodb_port }}"
+    timeout: 90
+
+- name: Initialize replica set once on mongo1
+  ansible.builtin.command:
+    argv:
+      - mongosh
+      - --quiet
+      - --eval
+      - >-
+        rs.initiate({
+          _id: "{{ replica_set_name }}",
+          members: [
+            { _id: 0, host: "{{ hostvars['mongo1'].mongo_private_ip }}:{{ mongodb_port }}" },
+            { _id: 1, host: "{{ hostvars['mongo2'].mongo_private_ip }}:{{ mongodb_port }}" },
+            { _id: 2, host: "{{ hostvars['mongo3'].mongo_private_ip }}:{{ mongodb_port }}" }
+          ]
+        })
+  delegate_to: mongo1
+  run_once: true
+  register: rs_init
+  changed_when: "'already initialized' not in (rs_init.stdout | lower) and 'already initialized' not in (rs_init.stderr | lower)"
+  failed_when: rs_init.rc != 0 and 'already initialized' not in (rs_init.stdout | lower) and 'already initialized' not in (rs_init.stderr | lower)
+
+- name: Wait until a primary is elected
+  ansible.builtin.command:
+    argv:
+      - mongosh
+      - --quiet
+      - --eval
+      - "db.hello().isWritablePrimary"
+  delegate_to: mongo1
+  run_once: true
+  register: primary_check
+  retries: 30
+  delay: 5
+  until: "'true' in primary_check.stdout"
+  changed_when: false
